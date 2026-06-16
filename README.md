@@ -13,7 +13,7 @@ In order to use this extension you will need:
 
 * A Google Play Console app with the [Play Integrity API](https://developer.android.com/google/play/integrity) enabled
 * A Google Cloud project linked to your Play Console app
-* A backend server to verify Play Integrity tokens (see the [Getting Started](../../wiki) guide for a reference implementation)
+* A backend server to verify Play Integrity tokens (see the [Getting Started](../../wiki/getting_started) guide for a reference implementation)
 
 > [!IMPORTANT]
 > To set up the extension in the IDE, double-click on it and complete the necessary information in the [Extension Options](https://manual.gamemaker.io/monthly/en/The_Asset_Editors/Extensions.htm).

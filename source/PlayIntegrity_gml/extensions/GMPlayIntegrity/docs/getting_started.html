@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="img/favicon.ico" />
+    <title>Getting Started - GMEXT-GooglePlayIntegrity</title>
+    <link rel="stylesheet" href="css/theme.css" />
+    <link rel="stylesheet" href="css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css" rel="stylesheet" />
+        <link href="assets/css/gmext_style.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Getting Started";
+        var mkdocs_page_input_path = "getting_started.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/gml.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="." class="icon icon-home"> GMEXT-GooglePlayIntegrity
+        </a>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="home.html">Google Play Integrity</a>
+                </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">Getting Started</a>
+    <ul class="current">
+    </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="extension_options.html">Extension Options</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href=".">GMEXT-GooglePlayIntegrity</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Getting Started</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/YoYoGames/GMEXT-GooglePlayIntegrity/edit/master/docs/getting_started.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <p>This guide walks you through integrating the Google Play Integrity extension into your GameMaker project. By the end you will be able to request an integrity token on Android and verify it server-side.</p>
+<h2 id="prerequisites">Prerequisites</h2>
+<p>Before using this extension you will need:</p>
+<ul>
+<li>A Google Play Console app with the <a href="https://developer.android.com/google/play/integrity/overview">Play Integrity API</a> enabled</li>
+<li>A Google Cloud project linked to your Play Console app (found under <strong>App integrity → Play Integrity API → Linked Cloud Project</strong> in the Play Console)</li>
+<li>A backend server capable of calling the Google Play Integrity API to verify tokens (see <a href="#server-side-verification">Server-Side Verification</a> below)</li>
+</ul>
+<h2 id="extension-setup">Extension Setup</h2>
+<ol>
+<li>Add the <strong>GMPlayIntegrity</strong> extension to your GameMaker project.</li>
+<li>Open the <a href="extension_options.html">Extension Options</a> and set <strong>CLOUD_PROJECT_NUMBER</strong> to the project number of your linked Google Cloud project.</li>
+</ol>
+<h2 id="generating-a-nonce">Generating a Nonce</h2>
+<p>Before requesting an integrity token you must generate a cryptographic nonce - a one-time random value that binds the token to a specific request. The Play Integrity API requires a Base64 web-safe no-wrap encoded string.</p>
+<p>```gml
+function play_integrity_generate_nonce() {
+    var _byte_count = 24;
+    var _buf = buffer_create(_byte_count, buffer_fixed, 1);</p>
+<pre><code>for (var _i = 0; _i &lt; _byte_count; _i++) {
+    buffer_poke(_buf, _i, buffer_u8, irandom(255));
+}
+
+var _bytes = "";
+for (var _i = 0; _i &lt; _byte_count; _i++) {
+    _bytes += chr(buffer_peek(_buf, _i, buffer_u8));
+}
+buffer_delete(_buf);
+
+var _nonce = base64_encode(_bytes);
+_nonce = string_replace_all(_nonce, "+", "-");
+_nonce = string_replace_all(_nonce, "/", "_");
+_nonce = string_replace_all(_nonce, "=", "");
+_nonce = string_replace_all(_nonce, "\n", "");
+_nonce = string_replace_all(_nonce, "\r", "");
+
+return _nonce;
+</code></pre>
+<p>}
+```</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Store the nonce value - you will need to send it alongside the token to your backend server so it can validate the request.</p>
+</div>
+<h2 id="requesting-a-token">Requesting a Token</h2>
+<p>Call <a href="home.html#play_integrity_request_token">play_integrity_request_token</a> with the generated nonce and a callback function. The callback is invoked asynchronously with the result:</p>
+<p>```gml
+var _nonce = play_integrity_generate_nonce();</p>
+<p>play_integrity_request_token(_nonce, function(_success, _token, _error) {
+    if (!_success) {
+        show_debug_message("Play Integrity token request failed: " + _error);
+        return;
+    }</p>
+<pre><code>show_debug_message("Token received. Sending to server for verification...");
+play_integrity_send_to_server(_nonce, _token);
+</code></pre>
+<p>});
+```</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>On local APK builds and GameMaker runs (not installed from the Play Store), the verdict will reflect that the app is not recognised. This is expected during development. See <a href="#testing">Testing</a> below.</p>
+</div>
+<h2 id="sending-the-token-to-your-server">Sending the Token to Your Server</h2>
+<p>Once you have the token, send it along with the original nonce to your backend server using <code>http_request</code>:</p>
+<p>```gml
+function play_integrity_send_to_server(_nonce, _token) {
+    var _payload = json_stringify({
+        token: _token,
+        nonce: _nonce
+    });</p>
+<pre><code>var _headers = ds_map_create();
+ds_map_add(_headers, "Content-Type", "application/json");
+
+http_request("https://YOUR_BACKEND_URL/verify", "POST", _headers, _payload);
+
+ds_map_destroy(_headers);
+</code></pre>
+<p>}
+```</p>
+<h2 id="handling-the-server-response">Handling the Server Response</h2>
+<p>Listen for the result in an <strong>Async - HTTP</strong> event. Your server should return a JSON object indicating whether the integrity check passed:</p>
+<p>```gml
+// Async - HTTP event
+if (async_load[? "status"] == 0) {
+    var _response = json_parse(async_load[? "result"]);</p>
+<pre><code>if (_response.success &amp;&amp; _response.passed) {
+    show_debug_message("Integrity check passed.");
+    // Allow the action or grant access
+} else {
+    show_debug_message("Integrity check failed.");
+    // Reject the action or deny access
+}
+</code></pre>
+<p>}
+```</p>
+<h2 id="server-side-verification">Server-Side Verification</h2>
+<p>Your backend server receives the token and nonce, calls the Google Play Integrity API (<code>playintegrity.v1.decodeIntegrityToken</code>), and validates:</p>
+<ul>
+<li><strong>Nonce match</strong> - the nonce in the decoded token matches the nonce your game sent</li>
+<li><strong>App recognition</strong> - <code>appRecognitionVerdict == "PLAY_RECOGNIZED"</code></li>
+<li><strong>Licensing</strong> - <code>appLicensingVerdict == "LICENSED"</code></li>
+</ul>
+<p>A reference Firebase Cloud Function implementation is included in the project's <code>ServerDocs</code> note asset (<code>source/PlayIntegrity_gml/notes/ServerDocs/ServerDocs.txt</code>).</p>
+<h2 id="testing">Testing</h2>
+<table>
+<thead>
+<tr>
+<th>Build type</th>
+<th>Expected app verdict</th>
+<th>Expected license verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Local APK / GameMaker run</td>
+<td><code>UNRECOGNIZED_VERSION</code></td>
+<td><code>UNEVALUATED</code></td>
+</tr>
+<tr>
+<td>Google Play Internal Testing</td>
+<td><code>PLAY_RECOGNIZED</code></td>
+<td><code>LICENSED</code></td>
+</tr>
+</tbody>
+</table>
+<p>To test the full flow:</p>
+<ol>
+<li>Export an Android AAB from GameMaker</li>
+<li>Upload to Google Play Console under <strong>Internal testing</strong></li>
+<li>Add your test account as a tester</li>
+<li>Install the build from the Play Store testing link</li>
+<li>Run the integrity check - all verdicts should pass</li>
+</ol>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="home.html" class="btn btn-neutral float-left" title="Google Play Integrity"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="extension_options.html" class="btn btn-neutral float-right" title="Extension Options">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+      <p><p align="center">GameMaker 2026</p></p>
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/YoYoGames/GMEXT-GooglePlayIntegrity" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+      <span><a href="home.html" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="extension_options.html" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = ".";</script>
+    <script src="js/theme_extra.js"></script>
+    <script src="js/theme.js"></script>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/gml.min.js"></script>
+      <script src="assets/js/gmext_script.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>
