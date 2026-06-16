@@ -1,0 +1,6 @@
+[gml_api]
+module GMPlayIntegrity;
+
+// Functions
+[global, bind = typed_gml]
+function play_integrity_request_token(nonce: string, callback: func): bool;

@@ -1,0 +1,657 @@
+PLAY INTEGRITY SERVER-SIDE DOCUMENTATION
+========================================
+
+Goal
+----
+Create a Firebase HTTPS Function that receives a Play Integrity token from GameMaker,
+asks Google to decode/verify it, then returns whether the app/user passes the license check.
+
+Final verified result should be:
+
+passed: 1
+nonceOk: 1
+appOk: 1
+licenseOk: 1
+appRecognitionVerdict: PLAY_RECOGNIZED
+appLicensingVerdict: LICENSED
+
+
+SERVER-SIDE FLOW
+================
+
+GameMaker Android
+    |
+    | 1. Generates nonce
+    | 2. Requests Play Integrity token
+    | 3. Sends token + nonce to Firebase
+    v
+
+Firebase HTTPS Function
+    |
+    | 4. Receives POST JSON:
+    |    {
+    |        "token": "...",
+    |        "nonce": "..."
+    |    }
+    |
+    | 5. Calls Google Play Integrity API:
+    |    decodeIntegrityToken
+    |
+    | 6. Reads decoded verdict:
+    |    requestDetails.nonce
+    |    appIntegrity.appRecognitionVerdict
+    |    accountDetails.appLicensingVerdict
+    |    deviceIntegrity.deviceRecognitionVerdict
+    |
+    | 7. Validates:
+    |    nonceOk
+    |    appOk
+    |    licenseOk
+    |
+    v
+
+Firebase response to GameMaker
+    |
+    | 8. Returns:
+    |    {
+    |        "success": true,
+    |        "passed": true
+    |    }
+
+
+BIG SERVER-SIDE STEPS
+=====================
+
+1. Use the same Google Cloud/Firebase project
+--------------------------------------------
+The Firebase Function should be deployed in the same Google Cloud project that is linked
+to Play Integrity in Google Play Console.
+
+Example:
+
+Google Play Console:
+App integrity -> Play Integrity API -> Linked Cloud Project
+
+Firebase project:
+YOUR_FIREBASE_PROJECT_ID
+
+Project number:
+YOUR_CLOUD_PROJECT_NUMBER
+
+GameMaker extension option:
+CLOUD_PROJECT_NUMBER = YOUR_CLOUD_PROJECT_NUMBER
+
+Why this matters:
+The Play Integrity token is created for a specific Cloud Project Number.
+The server that decodes the token should authenticate from that same project.
+
+
+2. Enable required Google APIs
+-----------------------------
+In Google Cloud Console, make sure these APIs are enabled:
+
+- Play Integrity API
+- Cloud Functions API
+- Cloud Build API
+- Artifact Registry API
+- Cloud Run API
+- Eventarc API
+
+Firebase deploy usually enables some of these automatically, but Play Integrity API should
+be enabled manually if needed.
+
+
+3. Create Firebase Functions project
+------------------------------------
+Project folder used:
+
+C:\PATH\TO\PlayIntegrityServer
+
+Initialize Firebase Functions:
+
+firebase init functions
+
+Recommended choices:
+
+- Use an existing project
+- Select your Firebase project, for example YOUR_FIREBASE_PROJECT_ID
+- JavaScript
+- ESLint: No, or remove lint predeploy later
+- Install dependencies: Yes
+
+
+4. Install server dependencies
+------------------------------
+Inside the functions folder:
+
+cd C:\PATH\TO\PlayIntegrityServer\functions
+
+npm install firebase-functions firebase-admin googleapis cors
+
+Required dependency for Play Integrity decoding:
+
+googleapis
+
+The function uses:
+
+const { google } = require("googleapis");
+
+
+5. Firebase function purpose
+----------------------------
+The function:
+
+verifyPlayIntegrity
+
+receives:
+
+{
+    "token": "PLAY_INTEGRITY_TOKEN_FROM_ANDROID",
+    "nonce": "ORIGINAL_NONCE_FROM_GAMEMAKER"
+}
+
+Then it calls:
+
+playintegrity.v1.decodeIntegrityToken
+
+using:
+
+packageName: "com.yourcompany.yourgame"
+
+and:
+
+requestBody: {
+    integrityToken: token
+}
+
+
+6. Important server checks
+--------------------------
+
+The server checks three main things:
+
+A. Nonce check
+--------------
+This confirms the token belongs to the same request GameMaker created.
+
+Google may return the nonce with Base64 padding "=" even if GameMaker sent it without padding,
+so both values must be normalized before comparing.
+
+Example:
+
+GameMaker sent:
+
+DsOoDsK1w4vCgUg6Xw_Cshd_BwfCr8KJw4JaWBLDusOTw58
+
+Google returned:
+
+DsOoDsK1w4vCgUg6Xw_Cshd_BwfCr8KJw4JaWBLDusOTw58=
+
+After normalization, they match.
+
+Result:
+
+nonceOk = true
+
+
+B. App recognition check
+------------------------
+This confirms Google Play recognizes the installed app build.
+
+Required verdict:
+
+appRecognitionVerdict == "PLAY_RECOGNIZED"
+
+Result:
+
+appOk = true
+
+If local APK / sideloaded / GameMaker run:
+
+appRecognitionVerdict may be:
+
+UNRECOGNIZED_VERSION
+
+That is expected for local testing.
+
+
+C. Licensing check
+------------------
+This confirms the Google account/app entitlement is licensed.
+
+Required verdict:
+
+appLicensingVerdict == "LICENSED"
+
+Result:
+
+licenseOk = true
+
+For local APK / sideloaded builds, this may be:
+
+UNEVALUATED
+
+That is expected.
+
+For Google Play Internal Testing install, expected value is:
+
+LICENSED
+
+
+7. Final production pass rule
+-----------------------------
+
+Production rule:
+
+passed = nonceOk && appOk && licenseOk
+
+Meaning:
+
+- Token nonce matches.
+- App is recognized by Google Play.
+- User/app entitlement is licensed.
+
+This is the rule you successfully tested:
+
+passed: 1
+nonceOk: 1
+appOk: 1
+licenseOk: 1
+appRecognitionVerdict: PLAY_RECOGNIZED
+appLicensingVerdict: LICENSED
+
+
+SERVER CODE
+===========
+
+File:
+
+C:\PATH\TO\PlayIntegrityServer\functions\index.js
+
+Current working server code:
+
+const { onRequest } = require("firebase-functions/v2/https");
+const { google } = require("googleapis");
+
+const PACKAGE_NAME = "com.yourcompany.yourgame";
+
+function normalizeNonce(value) {
+    if (!value) {
+        return "";
+    }
+
+    return String(value)
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=/g, "")
+        .replace(/\r/g, "")
+        .replace(/\n/g, "")
+        .trim();
+}
+
+exports.verifyPlayIntegrity = onRequest(async (req, res) => {
+    try {
+        if (req.method !== "POST") {
+            return res.status(405).json({
+                success: false,
+                error: "POST required"
+            });
+        }
+
+        const token = req.body && req.body.token ? req.body.token : "";
+        const expectedNonce = req.body && req.body.nonce ? req.body.nonce : "";
+
+        if (!token || !expectedNonce) {
+            return res.status(400).json({
+                success: false,
+                error: "Missing token or nonce"
+            });
+        }
+
+        const auth = new google.auth.GoogleAuth({
+            scopes: ["https://www.googleapis.com/auth/playintegrity"]
+        });
+
+        const playintegrity = google.playintegrity({
+            version: "v1",
+            auth: auth
+        });
+
+        const result = await playintegrity.v1.decodeIntegrityToken({
+            packageName: PACKAGE_NAME,
+            requestBody: {
+                integrityToken: token
+            }
+        });
+
+        const verdict = result.data.tokenPayloadExternal;
+
+        let requestNonce = "";
+        let appRecognitionVerdict = "";
+        let appLicensingVerdict = "";
+        let deviceIntegrity = [];
+
+        if (verdict && verdict.requestDetails && verdict.requestDetails.nonce) {
+            requestNonce = verdict.requestDetails.nonce;
+        }
+
+        if (verdict && verdict.appIntegrity && verdict.appIntegrity.appRecognitionVerdict) {
+            appRecognitionVerdict = verdict.appIntegrity.appRecognitionVerdict;
+        }
+
+        if (verdict && verdict.accountDetails && verdict.accountDetails.appLicensingVerdict) {
+            appLicensingVerdict = verdict.accountDetails.appLicensingVerdict;
+        }
+
+        if (verdict && verdict.deviceIntegrity && verdict.deviceIntegrity.deviceRecognitionVerdict) {
+            deviceIntegrity = verdict.deviceIntegrity.deviceRecognitionVerdict;
+        }
+
+        const normalizedExpectedNonce = normalizeNonce(expectedNonce);
+        const normalizedRequestNonce = normalizeNonce(requestNonce);
+
+        const nonceOk = normalizedRequestNonce === normalizedExpectedNonce;
+        const appOk = appRecognitionVerdict === "PLAY_RECOGNIZED";
+        const licenseOk = appLicensingVerdict === "LICENSED";
+
+        const passed = nonceOk && appOk && licenseOk;
+
+        return res.status(200).json({
+            success: true,
+            passed: passed,
+            checks: {
+                nonceOk: nonceOk,
+                appOk: appOk,
+                licenseOk: licenseOk
+            },
+            verdicts: {
+                expectedNonce: expectedNonce,
+                requestNonce: requestNonce,
+                normalizedExpectedNonce: normalizedExpectedNonce,
+                normalizedRequestNonce: normalizedRequestNonce,
+                appRecognitionVerdict: appRecognitionVerdict,
+                appLicensingVerdict: appLicensingVerdict,
+                deviceIntegrity: deviceIntegrity
+            },
+            raw: verdict
+        });
+    }
+    catch (e) {
+        console.error("verifyPlayIntegrity failed:", e);
+
+        return res.status(500).json({
+            success: false,
+            error: e.message || String(e)
+        });
+    }
+});
+
+
+DEPLOY COMMANDS
+===============
+
+From project root:
+
+cd C:\PATH\TO\PlayIntegrityServer
+
+firebase deploy --only functions
+
+Function name:
+
+verifyPlayIntegrity
+
+Region:
+
+us-central1
+
+Project:
+
+YOUR_FIREBASE_PROJECT_ID
+
+Cloud Run URL example:
+
+https://YOUR_CLOUD_RUN_URL.a.run.app
+
+Firebase Functions URL usually looks like:
+
+https://us-central1-YOUR_FIREBASE_PROJECT_ID.cloudfunctions.net/verifyPlayIntegrity
+
+
+PERMISSIONS / IAM FIXES
+=======================
+
+1. Cloud Build permission
+-------------------------
+If deploy fails with:
+
+Could not build the function due to a missing permission on the build service account
+
+Go to:
+
+Google Cloud Console
+-> IAM & Admin
+-> IAM
+
+Find:
+
+YOUR_CLOUD_PROJECT_NUMBER-compute@developer.gserviceaccount.com
+
+Add role:
+
+Cloud Build Service Account
+roles/cloudbuild.builds.builder
+
+
+2. Public invocation permission
+-------------------------------
+If browser/GameMaker gets:
+
+403 Forbidden
+Your client does not have permission to get URL / from this server.
+
+Then Cloud Run is blocking public requests.
+
+Fix:
+
+Google Cloud Console
+-> Cloud Run
+-> verifyplayintegrity
+-> Security or Permissions
+-> Allow public access
+
+Or add:
+
+New principal:
+allUsers
+
+Role:
+
+Cloud Run Invoker
+
+Command-line version:
+
+gcloud run services add-iam-policy-binding verifyplayintegrity ^
+  --region=us-central1 ^
+  --project=YOUR_FIREBASE_PROJECT_ID ^
+  --member="allUsers" ^
+  --role="roles/run.invoker"
+
+
+COMMON DEPLOY ISSUES
+====================
+
+1. Missing googleapis
+---------------------
+Error:
+
+Cannot find module 'googleapis'
+
+Fix:
+
+cd C:\PATH\TO\PlayIntegrityServer\functions
+
+npm install googleapis cors firebase-functions firebase-admin
+
+
+2. npm ci failure
+-----------------
+Error:
+
+npm error Run "npm help ci" for more info
+
+Fix:
+
+cd C:\PATH\TO\PlayIntegrityServer\functions
+
+Remove-Item -Recurse -Force node_modules -ErrorAction SilentlyContinue
+Remove-Item -Force package-lock.json -ErrorAction SilentlyContinue
+
+npm install
+
+cd C:\PATH\TO\PlayIntegrityServer
+
+firebase deploy --only functions
+
+
+3. Lint / parser issue
+----------------------
+Error:
+
+Parsing error: Unexpected token .
+
+Cause:
+ESLint/parser did not like optional chaining.
+
+Fix options:
+
+- Avoid optional chaining in index.js.
+- Remove lint predeploy from firebase.json.
+
+Recommended firebase.json:
+
+{
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log"
+      ]
+    }
+  ]
+}
+
+
+4. NODE_EXTRA_CA_CERTS issue
+----------------------------
+Error:
+
+Warning: Ignoring extra certs from C:\PATH\TO\cert.crt
+
+Fix:
+
+Remove-Item Env:NODE_EXTRA_CA_CERTS -ErrorAction SilentlyContinue
+[Environment]::SetEnvironmentVariable("NODE_EXTRA_CA_CERTS", $null, "User")
+
+
+TESTING STEPS
+=============
+
+1. Test local APK / GameMaker run
+---------------------------------
+Expected:
+
+nonceOk: 1
+appOk: 0
+licenseOk: 0
+passed: 0
+
+Common verdicts:
+
+appRecognitionVerdict: UNRECOGNIZED_VERSION
+appLicensingVerdict: UNEVALUATED
+
+This is OK for local testing.
+
+
+2. Test Google Play Internal Testing build
+------------------------------------------
+Steps:
+
+1. Export Android AAB from GameMaker.
+2. Upload to Google Play Console -> Internal testing.
+3. Add tester Google account.
+4. Install from the Play Store testing link.
+5. Run the Play Integrity test.
+
+Expected final result:
+
+passed: 1
+nonceOk: 1
+appOk: 1
+licenseOk: 1
+appRecognitionVerdict: PLAY_RECOGNIZED
+appLicensingVerdict: LICENSED
+
+
+PRODUCTION CLEANUP
+==================
+
+During testing, returning this is useful:
+
+checks
+verdicts
+raw
+
+For production, do not return raw verdict unless needed.
+
+Recommended production response:
+
+return res.status(200).json({
+    success: true,
+    passed: passed
+});
+
+Optional slightly more detailed production response:
+
+return res.status(200).json({
+    success: true,
+    passed: passed,
+    checks: {
+        nonceOk: nonceOk,
+        appOk: appOk,
+        licenseOk: licenseOk
+    }
+});
+
+Avoid returning:
+
+raw: verdict
+
+because it exposes unnecessary internal verdict details to the client.
+
+
+FINAL SERVER-SIDE SUCCESS CRITERIA
+==================================
+
+Your server-side setup is correct when GameMaker receives:
+
+passed: 1
+nonceOk: 1
+appOk: 1
+licenseOk: 1
+appRecognitionVerdict: PLAY_RECOGNIZED
+appLicensingVerdict: LICENSED
+
+This means:
+
+- Firebase Function is deployed.
+- Cloud Run public invoke is configured.
+- Google Play Integrity API decode works.
+- The nonce matches.
+- The app was recognized by Google Play.
+- The user/app entitlement is licensed.
+- The production rule passed.

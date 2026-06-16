@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMPlayIntegrity_API",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMPlayIntegrity_API",
+  "parent":{
+    "name":"PlayIntegrity",
+    "path":"folders/PlayIntegrity.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}
